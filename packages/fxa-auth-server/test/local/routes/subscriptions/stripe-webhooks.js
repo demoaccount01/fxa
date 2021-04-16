@@ -32,6 +32,8 @@ const eventInvoicePaymentFailed = require('../../payments/fixtures/stripe/event_
 const eventCustomerUpdated = require('../../payments/fixtures/stripe/event_customer_updated.json');
 const eventCustomerSubscriptionUpdated = require('../../payments/fixtures/stripe/event_customer_subscription_updated.json');
 const eventCustomerSourceExpiring = require('../../payments/fixtures/stripe/event_customer_source_expiring.json');
+const eventProductUpdated = require('../../payments/fixtures/stripe/product_updated_event.json');
+const eventPlanUpdated = require('../../payments/fixtures/stripe/plan_updated_event.json');
 const eventCreditNoteCreated = require('../../payments/fixtures/stripe/event_credit_note_created.json');
 const failedDoReferenceTransactionResponse = require('../../payments/fixtures/paypal/do_reference_transaction_failure.json');
 const { default: Container } = require('typedi');
@@ -42,7 +44,7 @@ const {
   PAYPAL_BILLING_AGREEMENT_INVALID,
   PAYPAL_SOURCE_ERRORS,
 } = require('../../../../lib/payments/paypal-error-codes');
-const { mockLog } = require('../../../mocks');
+const { mockLog, asyncIterable } = require('../../../mocks');
 
 let config, log, db, customs, push, mailer, profile;
 
@@ -231,6 +233,22 @@ describe('StripeWebhookHandler', () => {
     let stubSendSubscriptionStatusToSqs;
 
     beforeEach(() => {
+      const validPlan = deepCopy(eventPlanUpdated);
+      validPlan.data.object.metadata['product:termsOfServiceDownloadURL'] =
+        'https://accounts-static.cdn.mozilla.net/legal/mozilla_vpn_tos';
+      const validProduct = deepCopy(eventProductUpdated);
+      validProduct.data.object.metadata[
+        'product:termsOfServiceDownloadURL:en-us'
+      ] = 'https://accounts-static.cdn.mozilla.net/legal/mozilla_vpn_tos';
+
+      StripeWebhookHandlerInstance.stripeHelper.fetchPlansByProductId.returns(
+        asyncIterable([validPlan.data.object])
+      );
+      StripeWebhookHandlerInstance.stripeHelper.fetchProductById.returns({
+        product_id: validProduct.data.object.id,
+        product_name: validProduct.data.object.name,
+        product_metadata: validProduct.data.object.metadata,
+      });
       StripeWebhookHandlerInstance.stripeHelper.getCustomerUidEmailFromSubscription.resolves(
         {
           uid: UID,
@@ -257,6 +275,8 @@ describe('StripeWebhookHandler', () => {
         'handleSubscriptionDeletedEvent',
         'handleCustomerUpdatedEvent',
         'handleCustomerSourceExpiringEvent',
+        'handleProductUpdatedEvent',
+        'handlePlanUpdatedEvent',
         'handleCreditNoteEvent',
         'handleInvoicePaidEvent',
         'handleInvoicePaymentFailedEvent',
@@ -380,6 +400,17 @@ describe('StripeWebhookHandler', () => {
         );
       });
 
+      describe('when the event.type is product.updated', () => {
+        itOnlyCallsThisHandler(
+          'handleProductUpdatedEvent',
+          eventProductUpdated
+        );
+      });
+
+      describe('when the event.type is plan.updated', () => {
+        itOnlyCallsThisHandler('handlePlanUpdatedEvent', eventPlanUpdated);
+      });
+
       describe('when the event.type is credit_note.created', () => {
         itOnlyCallsThisHandler('handleCreditNoteEvent', eventCreditNoteCreated);
       });
@@ -483,6 +514,78 @@ describe('StripeWebhookHandler', () => {
           StripeWebhookHandlerInstance.stripeHelper.refreshCachedCustomer
         );
         assert.calledOnce(sentryModule.reportSentryError);
+      });
+    });
+
+    describe('handleProductUpdatedEvent', () => {
+      let scopeContextSpy, scopeSpy;
+      beforeEach(() => {
+        scopeContextSpy = sinon.fake();
+        scopeSpy = {
+          setContext: scopeContextSpy,
+        };
+        sandbox.replace(Sentry, 'withScope', (fn) => fn(scopeSpy));
+      });
+
+      it('throws a sentry error if the update event data is invalid', async () => {
+        const updatedEvent = deepCopy(eventProductUpdated);
+        await StripeWebhookHandlerInstance.handleProductUpdatedEvent(
+          {},
+          updatedEvent
+        );
+
+        assert.isTrue(scopeContextSpy.called, 'Expected to call Sentry');
+      });
+
+      it('does not throw a sentry error if the update event data is valid', async () => {
+        const updatedEvent = deepCopy(eventProductUpdated);
+        updatedEvent.data.object.metadata[
+          'product:termsOfServiceDownloadURL:en-us'
+        ] = 'https://accounts-static.cdn.mozilla.net/legal/mozilla_vpn_tos';
+        await StripeWebhookHandlerInstance.handleProductUpdatedEvent(
+          {},
+          updatedEvent
+        );
+
+        assert.isTrue(scopeContextSpy.notCalled, 'Expected not to call Sentry');
+      });
+    });
+
+    describe('handlePlanUpdatedEvent', () => {
+      let scopeContextSpy, scopeSpy;
+      beforeEach(() => {
+        scopeContextSpy = sinon.fake();
+        scopeSpy = {
+          setContext: scopeContextSpy,
+        };
+        sandbox.replace(Sentry, 'withScope', (fn) => fn(scopeSpy));
+      });
+
+      it('throws a sentry error if the update event data is invalid', async () => {
+        const updatedEvent = deepCopy(eventPlanUpdated);
+        updatedEvent.data.object.metadata = {
+          'product:termsOfServiceDownloadURL:en-us':
+            'https://FAIL.net/legal/mozilla_vpn_tos',
+        };
+        await StripeWebhookHandlerInstance.handlePlanUpdatedEvent(
+          {},
+          updatedEvent
+        );
+
+        assert.isTrue(scopeContextSpy.called, 'Expected to call Sentry');
+      });
+
+      it('does not throw a sentry error if the update event data is valid', async () => {
+        const updatedEvent = deepCopy(eventPlanUpdated);
+        updatedEvent.data.object.metadata[
+          'product:termsOfServiceDownloadURL:en-us'
+        ] = 'https://accounts-static.cdn.mozilla.net/legal/mozilla_vpn_tos';
+        await StripeWebhookHandlerInstance.handlePlanUpdatedEvent(
+          {},
+          updatedEvent
+        );
+
+        assert.isTrue(scopeContextSpy.notCalled, 'Expected not to call Sentry');
       });
     });
 

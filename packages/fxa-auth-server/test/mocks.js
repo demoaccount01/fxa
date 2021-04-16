@@ -186,6 +186,7 @@ const PROFILE_METHOD_NAMES = ['deleteCache'];
 module.exports = {
   MOCK_PUSH_KEY:
     'BDLugiRzQCANNj5KI1fAqui8ELrE7qboxzfa5K_R0wnUoJ89xY1D_SOXI_QJKNmellykaW_7U2BZ7hnrPW3A3LM',
+  asyncIterable: asyncIterable,
   generateMetricsContext: generateMetricsContext,
   mockBounces: mockObject(['check']),
   mockCustoms,
@@ -641,18 +642,18 @@ function mockMetricsContext(methods) {
                 flow_id: this.payload.metricsContext.flowId,
                 flow_time: time - this.payload.metricsContext.flowBeginTime,
                 flowBeginTime: this.payload.metricsContext.flowBeginTime,
-                flowCompleteSignal: this.payload.metricsContext
-                  .flowCompleteSignal,
+                flowCompleteSignal:
+                  this.payload.metricsContext.flowCompleteSignal,
                 flowType: this.payload.metricsContext.flowType,
               },
               this.headers && this.headers.dnt === '1'
                 ? {}
                 : {
                     entrypoint: this.payload.metricsContext.entrypoint,
-                    entrypoint_experiment: this.payload.metricsContext
-                      .entrypointExperiment,
-                    entrypoint_variation: this.payload.metricsContext
-                      .entrypointVariation,
+                    entrypoint_experiment:
+                      this.payload.metricsContext.entrypointExperiment,
+                    entrypoint_variation:
+                      this.payload.metricsContext.entrypointVariation,
                     utm_campaign: this.payload.metricsContext.utmCampaign,
                     utm_content: this.payload.metricsContext.utmContent,
                     utm_medium: this.payload.metricsContext.utmMedium,
@@ -784,6 +785,21 @@ function mockVerificationReminders(data = {}) {
     process: sinon.spy(
       () => data.process || { first: [], second: [], third: [] }
     ),
+  };
+}
+
+function asyncIterable(lst) {
+  const asyncIter = {
+    items: lst,
+    next() {
+      const value = this.items.shift();
+      return value
+        ? Promise.resolve({ value, done: false })
+        : Promise.resolve({ done: true });
+    },
+  };
+  return {
+    [Symbol.asyncIterator]: () => asyncIter,
   };
 }
 
